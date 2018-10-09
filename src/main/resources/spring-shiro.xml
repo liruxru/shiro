@@ -1,0 +1,194 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:util="http://www.springframework.org/schema/util"
+	xsi:schemaLocation="
+       http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans.xsd
+       http://www.springframework.org/schema/util http://www.springframework.org/schema/util/spring-util.xsd
+	">
+
+	<description>== Shiro Components  shiro_spring配置文件 ==</description>
+	<!-- Shiro生命周期处理器 交由Spring管理-->
+	<bean id="lifecycleBeanPostProcessor" class="org.apache.shiro.spring.LifecycleBeanPostProcessor" />
+	<!-- 静态注入，交由spring管理后实现静态注入，相当于调用SecurityUtils.setSecurityManager(securityManager) -->
+	<bean class="org.springframework.beans.factory.config.MethodInvokingFactoryBean">
+		<property name="staticMethod" value="org.apache.shiro.SecurityUtils.setSecurityManager"/>
+		<property name="arguments" ref="securityManager"/>
+	</bean>
+	
+
+	<!--配置shiroFilter  web.xml的shiroFilter-->
+	<bean id="shiroFilter" class="org.apache.shiro.spring.web.ShiroFilterFactoryBean">
+		<!--配置securityManager-->
+		<property name="securityManager" ref="securityManager" />
+		<!--用户的登录路径-->
+		<property name="loginUrl" value="/u/login.shtml" />
+		<!--	TODO 待提取	-->
+		<property name="successUrl" value="/" />
+	
+		<!--登录成功跳转的页面，默认跳转到登录之前请求的页面 所以一般不配置-->
+		<!--<property name="successUrl" value="/" />-->
+		<!--用户没有权限时跳转的页面-->
+			<property name="unauthorizedUrl" value="/?login" />
+		<!-- 过滤器链 动态生成读取初始自定义权限内容  加载过滤器链-->
+		<property name="filterChainDefinitions" value="#{shiroManager.loadFilterChainDefinitions()}"/>
+		<!-- 过虑器链定义，下面是静态配置的方法 从上向下顺序执行，一般将/**放在最下边  这种方法可以用上边的方法替代-->
+		<!--
+		自定义角色过滤器 支持多个角色可以访问同一个资源 eg:/home.jsp = authc,roleOR[admin,user]
+		用户有admin或者user角色 就可以访问
+	    -->
+		<!--<property name="filterChainDefinitions">
+			<value>
+				&lt;!&ndash; 退出拦截，请求logout.action执行退出操作 &ndash;&gt;
+				/logout.action = logout
+				&lt;!&ndash; 无权访问页面 &ndash;&gt;
+				/refuse.jsp = anon
+				&lt;!&ndash; roles[XX]表示有XX角色才可访问 &ndash;&gt;
+				/item/list.action = roles[item],authc
+				/js/** anon
+				/images/** anon
+				/styles/** anon
+				/validatecode.jsp anon
+				/item/* authc
+				&lt;!&ndash; user表示身份认证通过或通过记住我认证通过的可以访问 &ndash;&gt;
+				/** = authc
+			</value>
+		</property>-->
+		<!--配置文件中filter的定义-->
+		<property name="filters">
+			<util:map>
+				<entry key="login" value-ref="login"></entry>
+				<entry key="role" value-ref="role"></entry>
+				<entry key="simple" value-ref="simple"></entry>
+				<entry key="permission" value-ref="permission"></entry>
+				<entry key="kickout" value-ref="kickout"></entry>
+			</util:map>
+		</property>
+	</bean>
+	
+		<!-- 安全管理器 配置 securityManager  securityManager相当于shiro的主体 -->
+	<bean id="securityManager" class="org.apache.shiro.web.mgt.DefaultWebSecurityManager">
+		<!--用户认证和鉴权真正使用的realm-->
+		<property name="realm" ref="sampleRealm"/>
+		<!--用户缓存管理：包括权限等 这样就不用每次查询数据库，减轻服务器压力-->
+		<property name="cacheManager" ref="customShiroCacheManager"/>
+		<!--session管理-->
+		<property name="sessionManager" ref="sessionManager"/>
+		<property name="rememberMeManager" ref="rememberMeManager"/>
+	</bean>
+	
+	<!--配置文件中filter的定义  上边引用了这里-->
+	<bean id="shiroManager" class="com.bonc.shiro.ShiroManagerImpl"/>
+	<bean id="login" class="com.bonc.shiro.filter.LoginFilter"/>
+	<bean id="role" class="com.bonc.shiro.filter.RoleFilter"/>
+	<bean id="permission" class="com.bonc.shiro.filter.PermissionFilter"/>
+	<bean id="simple" class="com.bonc.shiro.filter.SimpleAuthFilter"/>
+	<!-- session 校验单个用户是否多次登录 -->
+	<bean id="kickout" class="com.bonc.shiro.filter.KickoutSessionFilter"/>
+	
+	<!-- 授权 认证 自定义的realm -->
+	<bean id="sampleRealm" class="com.bonc.shiro.realm.SampleRealm" ></bean>
+	<!--缓存的配置begin-->
+	<!-- 用户缓存 -->
+	<bean id="customShiroCacheManager" class="com.bonc.shiro.cache.impl.CustomShiroCacheManager">
+		<property name="shiroCacheManager" ref="jedisShiroCacheManager"/>
+	</bean>
+
+	<!-- shiro 缓存实现，对ShiroCacheManager，我是采用redis的实现 -->
+	<bean id="jedisShiroCacheManager" class="com.bonc.shiro.cache.impl.JedisShiroCacheManager">
+		<property name="jedisManager" ref="jedisManager"/>
+	</bean>
+
+
+	<!--缓存的配置end-->
+	<!-- Session Manager session管理begin -->
+	<!-- 会话Session ID生成器 -->
+	<bean id="sessionIdGenerator" class="org.apache.shiro.session.mgt.eis.JavaUuidSessionIdGenerator"/>
+	<bean id="sessionManager" class="org.apache.shiro.web.session.mgt.DefaultWebSessionManager">
+		<!-- 相隔多久检查一次session的有效性   -->
+		<property name="sessionValidationInterval" value="${session.timeout}"/>
+		<!-- session 有效时间为半小时 （毫秒单位）-->
+		<property name="globalSessionTimeout" value="${session.timeout}"/>
+		<property name="sessionDAO" ref="customShiroSessionDAO"/>
+		<!-- session 监听，可以多个。 -->
+		<property name="sessionListeners">
+			<list>
+				<ref bean="customSessionListener"/>
+			</list>
+		</property>
+		<!-- 间隔多少时间检查，不配置是60分钟  会话验证调度器 -->
+		<property name="sessionValidationScheduler" ref="sessionValidationScheduler"/>
+		<!-- 是否开启 检测，默认开启  -->
+		<property name="sessionValidationSchedulerEnabled" value="true"/>
+		<!-- 是否删除无效的session，默认也是开启 -->
+		<property name="deleteInvalidSessions" value="true"/>
+		<!-- 会话Cookie模板 -->
+		<property name="sessionIdCookie" ref="sessionIdCookie"/>
+	</bean>
+
+
+	<!-- custom shiro session listener session的监听启动、销毁、超时-->
+	<bean id="customSessionListener" class="com.bonc.shiro.session.listener.CustomSessionListener">
+		<property name="shiroSessionRepository" ref="jedisShiroSessionRepository"/>
+	</bean>
+	<!-- session dao 对session的操作 -->
+	<bean id="customShiroSessionDAO" class="com.bonc.shiro.session.dao.CustomShiroSessionDAO">
+		<property name="shiroSessionRepository" ref="jedisShiroSessionRepository"/>
+		<property name="sessionIdGenerator" ref="sessionIdGenerator"/>
+	</bean>
+	<!-- session 创建、删除、查询  session的监听和sessionDao引用了它 -->
+	<bean id="jedisShiroSessionRepository" class="com.bonc.shiro.session.dao.JedisShiroSessionRepository" >
+		<property name="jedisManager" ref="jedisManager"/>
+	</bean>
+	<!-- 手动操作Session，管理Session -->
+	<bean id="customSessionManager" class="com.bonc.shiro.session.CustomSessionManager">
+		<property name="customShiroSessionDAO" ref="customShiroSessionDAO"/>
+	</bean>
+
+	<!-- 会话验证调度器 -->
+	<bean id="sessionValidationScheduler" class="org.apache.shiro.session.mgt.ExecutorServiceSessionValidationScheduler">
+		<!-- 间隔多少时间检查，不配置是60分钟 -->
+		<property name="interval" value="${session.validate.timespan}"/>
+		<property name="sessionManager" ref="sessionManager"/>
+	</bean>
+	<!-- session 校验单个用户是否多次登录 -->
+	<!-- 静态注入 jedisShiroSessionRepository-->
+	<bean class="org.springframework.beans.factory.config.MethodInvokingFactoryBean">
+		<property name="staticMethod" value="com.bonc.shiro.filter.KickoutSessionFilter.setShiroSessionRepository"/>
+		<property name="arguments" ref="jedisShiroSessionRepository"/>
+	</bean>
+	<!-- 会话Cookie模板  使用cookie可以使用rememberMe的功能 -->
+	<bean id="sessionIdCookie" class="org.apache.shiro.web.servlet.SimpleCookie">
+		<!--cookie的name，我故意取名叫xxxxbaidu -->
+		<constructor-arg value="v_v-s-baidu"/>
+		<property name="httpOnly" value="true"/>
+		<!--cookie的有效时间 -->
+		<property name="maxAge" value="-1"/>
+		<!-- 配置存储Session Cookie的domain为 一级域名
+        <property name="domain" value=".itboy.net"/>
+         -->
+	</bean>
+	<!-- Session Manager session管理end-->
+
+
+
+
+
+	<!-- 用户信息记住我功能的相关配置这个 看这个cookie和模板cookie室友区别的maxage -->
+	<bean id="rememberMeCookie" class="org.apache.shiro.web.servlet.SimpleCookie">
+		<constructor-arg value="v_v-re-baidu"/>
+		<property name="httpOnly" value="true"/>
+		<property name="maxAge" value="2592000"/><!-- 30天时间，记住我30天 -->
+	</bean>
+
+	<!-- rememberMe管理器 -->
+	<bean id="rememberMeManager" class="org.apache.shiro.web.mgt.CookieRememberMeManager">
+		<!-- rememberMe cookie加密的密钥 建议每个项目都不一样 默认AES算法 密钥长度（128 256 512 位）-->
+		<property name="cipherKey"
+				  value="#{T(org.apache.shiro.codec.Base64).decode('3AvVhmFLUs0KTA3Kprsdag==')}"/>
+		<property name="cookie" ref="rememberMeCookie"/>
+	</bean>
+	<!-- ============================================================================ -->
+
+</beans>
+
